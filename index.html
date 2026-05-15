@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>AR Debug v2</title>
+  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; background: #111; overflow: hidden; }
+    #debug {
+      position: fixed; top: 0; left: 0; right: 0; max-height: 70vh;
+      background: rgba(0,0,0,0.88); color: #0f0; font-family: monospace;
+      font-size: 12px; padding: 8px; z-index: 99999;
+      overflow-y: auto; white-space: pre-wrap; word-break: break-word;
+      line-height: 1.4;
+    }
+    #debug .err { color: #f44; }
+    #debug .ok { color: #4f4; }
+    #debug .info { color: #4af; }
+    #debug .warn { color: #fa4; }
+    #start-btn {
+      position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
+      padding: 20px 50px; background: #ff4400; color: #fff; border: none;
+      border-radius: 8px; font-size: 18px; z-index: 99998;
+    }
+    #start-btn:disabled { opacity: 0.5; }
+    #ar-container { width: 100%; height: 100%; }
+  </style>
+</head>
+<body>
+  <div id="debug">Готов. Жди тестов файлов...</div>
+  <button id="start-btn" style="display:none;">Запустить AR</button>
+  <div id="ar-container"></div>
+
+  <video id="fire-video"
+         loop muted playsinline webkit-playsinline preload="auto" crossorigin="anonymous"
+         style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">
+    <source src="./fire-video.webm" type="video/webm">
+    <source src="./fire-video.mp4" type="video/mp4; codecs=hvc1">
+  </video>
+
+  <script>
+    const dbg = document.getElementById('debug');
+    function log(msg, cls = '') {
+      const time = new Date().toLocaleTimeString();
+      dbg.innerHTML += '\n<span class="' + cls + '">[' + time + '] ' + msg + '</span>';
+      dbg.scrollTop = dbg.scrollHeight;
+    }
+
+    log('Браузер: ' + navigator.userAgent.substring(0, 50), 'info');
+    log('Протокол: ' + location.protocol, location.protocol === 'https:' ? 'ok' : 'err');
+
+    window.addEventListener('error', (e) => {
+      log('JS ERR: ' + e.message, 'err');
+    });
+    window.addEventListener('unhandledrejection', (e) => {
+      log('PROMISE ERR: ' + ((e.reason && e.reason.message) || e.reason), 'err');
+    });
+
+    // ШАГ 1: Проверим что targets.mind доступен
+    log('Тест 1: проверяю targets.mind...');
+    fetch('./targets.mind').then(r => {
+      log('targets.mind HTTP: ' + r.status + ' (' + r.headers.get('content-length') + ' байт)',
+          r.ok ? 'ok' : 'err');
+      return r.ok ? r.arrayBuffer() : null;
+    }).then(buf => {
+      if (buf) log('targets.mind загружен: ' + buf.byteLength + ' байт', 'ok');
+    }).catch(e => log('targets.mind ОШИБКА: ' + e.message, 'err'));
+
+    // ШАГ 2: Проверим видео
+    log('Тест 2: проверяю fire-video.webm...');
+    fetch('./fire-video.webm', {method: 'HEAD'}).then(r => {
+      log('fire-video.webm HTTP: ' + r.status, r.ok ? 'ok' : 'err');
+    }).catch(e => log('webm err: ' + e.message, 'err'));
+
+    log('Тест 3: проверяю fire-video.mp4...');
+    fetch('./fire-video.mp4', {method: 'HEAD'}).then(r => {
+      log('fire-video.mp4 HTTP: ' + r.status, r.ok ? 'ok' : 'err');
+    }).catch(e => log('mp4 err: ' + e.message, 'err'));
+
+    // ШАГ 3: Проверим, загрузились ли библиотеки
+    setTimeout(() => {
+      log('A-Frame: ' + (window.AFRAME ? AFRAME.version : 'НЕТ'),
+          window.AFRAME ? 'ok' : 'err');
+      log('THREE: ' + (window.THREE ? THREE.REVISION : 'НЕТ'),
+          window.THREE ? 'ok' : 'err');
+      log('MindAR компонент: ' + (window.AFRAME && AFRAME.components['mindar-image'] ? 'есть' : 'НЕТ'),
+          (window.AFRAME && AFRAME.components['mindar-image']) ? 'ok' : 'err');
+
+      document.getElementById('start-btn').style.display = 'block';
+      log('--- готов к старту ---', 'info');
+    }, 1500);
+
+    const startBtn = document.getElementById('start-btn');
+    const arContainer = document.getElementById('ar-container');
+    const fireVideo = document.getElementById('fire-video');
+
+    startBtn.addEventListener('click', async () => {
+      startBtn.disabled = true;
+      startBtn.textContent = 'Запускаю...';
+      log('=== СТАРТ ===', 'info');
+
+      try {
+        // Стартуем видео по жесту
+        try { await fireVideo.play(); log('Видео огня запущено', 'ok'); }
+        catch(e) { log('Видео err: ' + e.message, 'warn'); }
+
+        log('Вставляю a-scene в DOM...');
+        arContainer.innerHTML =
+          '<a-scene mindar-image="imageTargetSrc: ./targets.mind; autoStart: true; uiLoading: no; uiScanning: no; uiError: no;" ' +
+          'color-space="sRGB" renderer="colorManagement: true; alpha: true" ' +
+          'vr-mode-ui="enabled: false" device-orientation-permission-ui="enabled: false">' +
+            '<a-camera position="0 0 0" look-controls="enabled: false"></a-camera>' +
+            '<a-entity mindar-image-target="targetIndex: 0" id="ar-target">' +
+              '<a-plane id="fire-plane" width="1.10" height="1.467" position="0 0 0.01" ' +
+                'material="shader: flat; src: #fire-video; transparent: true; side: double; depthWrite: false; alphaTest: 0.01" ' +
+                'visible="false"></a-plane>' +
+            '</a-entity>' +
+          '</a-scene>';
+
+        const sceneEl = document.querySelector('a-scene');
+
+        // Все возможные события сцены
+        const events = ['loaded', 'rendererresize', 'enter-vr', 'exit-vr', 'arReady', 'arError'];
+        events.forEach(ev => {
+          sceneEl.addEventListener(ev, (e) => {
+            log('scene.' + ev + (e.detail ? ': ' + JSON.stringify(e.detail).substring(0, 100) : ''),
+                ev.includes('Error') ? 'err' : 'ok');
+          });
+        });
+
+        // Когда сцена загрузилась, цепляем события маркера
+        sceneEl.addEventListener('loaded', () => {
+          log('Цепляю события маркера...', 'info');
+          const target = document.getElementById('ar-target');
+          const firePlane = document.getElementById('fire-plane');
+          target.addEventListener('targetFound', () => {
+            log('🎯 ЦЕЛЬ НАЙДЕНА', 'ok');
+            firePlane.setAttribute('visible', 'true');
+            if (fireVideo.paused) fireVideo.play();
+          });
+          target.addEventListener('targetLost', () => {
+            log('Цель потеряна');
+            firePlane.setAttribute('visible', 'false');
+          });
+        });
+
+        // Таймер: если за 10 секунд ничего не произошло — диагностируем
+        let elapsed = 0;
+        const timer = setInterval(() => {
+          elapsed += 2;
+          log('Прошло ' + elapsed + ' сек. Сцена hasLoaded=' + sceneEl.hasLoaded, 'warn');
+          if (elapsed >= 20) clearInterval(timer);
+        }, 2000);
+
+      } catch (err) {
+        log('ОШИБКА: ' + err.name + ': ' + err.message, 'err');
+        startBtn.disabled = false;
+        startBtn.textContent = 'Попробовать снова';
+      }
+    });
+  </script>
+</body>
+</html>
